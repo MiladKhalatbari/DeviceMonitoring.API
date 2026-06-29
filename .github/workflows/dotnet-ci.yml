@@ -34,4 +34,5 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Run unit and integration tests
-        run: dotnet test --configuration Release --no-build --verbosity normal
+  env: TESTCONTAINERS_HOST_OVERRIDE: 127.0.0.1
+  run: dotnet test --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed"
