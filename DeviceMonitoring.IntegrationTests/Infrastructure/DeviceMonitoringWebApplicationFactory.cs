@@ -4,30 +4,39 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DeviceMonitoring.IntegrationTests.Infrastructure;
 
-public class DeviceMonitoringWebApplicationFactory(string connectionString, bool useTestAuthentication = true): WebApplicationFactory<Program>
+public class DeviceMonitoringWebApplicationFactory(
+    string connectionString,
+    bool useTestAuthentication = true)
+    : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
 
-        builder.ConfigureAppConfiguration((_, configurationBuilder) =>
-        {
-            configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DeviceMonitoring"] = connectionString
-            });
-        });
-
-        if (!useTestAuthentication)
-            return;
-
         builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<DbContextOptions<DeviceMonitoringContext>>();
+            services.RemoveAll<DbContextOptions>();
+            services.RemoveAll<DeviceMonitoringContext>();
+
+            services.AddDbContext<DeviceMonitoringContext>(options =>
+                options.UseSqlServer(
+                    connectionString,
+                    sqlServerOptions => sqlServerOptions.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null)));
+
+            if (!useTestAuthentication)
+            {
+                return;
+            }
+
             services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = TestAuthHandler.SCHEME_NAME;
@@ -35,14 +44,14 @@ public class DeviceMonitoringWebApplicationFactory(string connectionString, bool
                 options.DefaultForbidScheme = TestAuthHandler.SCHEME_NAME;
             })
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
-                TestAuthHandler.SCHEME_NAME,
+                TestAuthHandler.SCHEME_NAME, 
                 _ => { });
         });
     }
 
     public async Task ResetDatabaseAsync()
     {
-        using var scope = Services.CreateScope();
+        await using var scope = Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<DeviceMonitoringContext>();
 
         await context.Database.EnsureDeletedAsync();
