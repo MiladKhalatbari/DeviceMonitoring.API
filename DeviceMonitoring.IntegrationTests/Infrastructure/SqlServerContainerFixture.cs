@@ -3,41 +3,61 @@ using Testcontainers.MsSql;
 
 namespace DeviceMonitoring.IntegrationTests.Infrastructure;
 
-public class SqlServerContainerFixture : IAsyncLifetime
+public sealed class SqlServerContainerFixture : IAsyncLifetime
 {
     private const string DATABASE_NAME = "DeviceMonitoringIntegrationTests";
+    private const string CI_CONNECTION_STRING_VARIABLE = "INTEGRATION_TEST_CONNECTION_STRING";
 
-    private readonly MsSqlContainer _sqlServerContainer =
-        new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
-            .Build();
+    private readonly string? _ciConnectionString =
+        Environment.GetEnvironmentVariable(CI_CONNECTION_STRING_VARIABLE);
 
-    public string ConnectionString
+    private readonly MsSqlContainer? _sqlServerContainer;
+
+    public SqlServerContainerFixture()
     {
-        get
+        if (string.IsNullOrWhiteSpace(_ciConnectionString))
         {
-            var connectionStringBuilder = new SqlConnectionStringBuilder(
-                _sqlServerContainer.GetConnectionString())
-            {
-                InitialCatalog = DATABASE_NAME
-            };
-
-            return connectionStringBuilder.ConnectionString;
+            _sqlServerContainer =
+                new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
+                    .Build();
         }
     }
 
+    public string ConnectionString =>
+        _ciConnectionString ?? GetTestcontainersConnectionString();
+
     public async ValueTask InitializeAsync()
     {
-        await _sqlServerContainer.StartAsync();
-        var adminConnectionString = _sqlServerContainer.GetConnectionString();
-        var builder = new SqlConnectionStringBuilder(adminConnectionString);
+        if (_sqlServerContainer is not null)
+        {
+            await _sqlServerContainer.StartAsync();
+        }
 
-        Console.WriteLine($"Test SQL Server endpoint: {builder.DataSource}");
-        await using var connection = new SqlConnection(adminConnectionString);
+        var masterConnectionString = new SqlConnectionStringBuilder(ConnectionString)
+        {
+            InitialCatalog = "master"
+        }.ConnectionString;
+
+        await using var connection = new SqlConnection(masterConnectionString);
         await connection.OpenAsync();
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        return _sqlServerContainer.DisposeAsync();
+        if (_sqlServerContainer is not null)
+        {
+            await _sqlServerContainer.DisposeAsync();
+        }
+    }
+
+    private string GetTestcontainersConnectionString()
+    {
+        var connectionStringBuilder = new SqlConnectionStringBuilder(
+            _sqlServerContainer!.GetConnectionString())
+        {
+            InitialCatalog = DATABASE_NAME
+        };
+
+        return connectionStringBuilder.ConnectionString;
     }
 }
